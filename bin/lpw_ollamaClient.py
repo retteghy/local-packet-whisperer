@@ -48,9 +48,9 @@ class OllamaClient():
                 messages=self.messages,
                 temperature=temp
             )
-        except Exception as e:
-            st.error(f'Error Occured : {e} ', icon="🚨")
-            st.stop()
+        except Exception:
+            self.messages.pop()  # drop the user turn so a retry isn't duplicated
+            raise
         content = response.choices[0].message.content
         self.messages.append({'role': 'assistant', 'content': content})
         return content
@@ -66,9 +66,9 @@ class OllamaClient():
                 temperature=temp,
                 stream=True
             )
-        except Exception as e:
-            st.error(f'Error Occured : {e} ', icon="🚨")
-            st.stop()
+        except Exception:
+            self.messages.pop()  # drop the user turn so a retry isn't duplicated
+            raise
         return stream
 
     def cancel(self):

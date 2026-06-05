@@ -245,24 +245,28 @@ def getEnabledFilters():
         return None
     return tagger_component('Enabled Filters', tags=filters, color_name='blue')
 
-def _generation_thread(prompt, model, chunks, stop_event, done_flag):
+def _generation_thread(prompt, model, chunks, stop_event, done_flag, err):
     try:
         for chunk in chatWithModelStream(prompt=prompt, model=model, stop_event=stop_event):
             chunks.append(chunk)
+    except Exception as e:
+        err.append(str(e))
     finally:
         done_flag[0] = True
 
 def _start_generation(prompt, model):
     chunks = []
+    err = []
     stop_event = threading.Event()
     done_flag = [False]
     st.session_state['_gen_chunks'] = chunks
+    st.session_state['_gen_error'] = err
     st.session_state['_gen_stop_event'] = stop_event
     st.session_state['_gen_done_flag'] = done_flag
     st.session_state['_gen_finished'] = False
     st.session_state['_gen_stopping'] = False
     st.session_state['generating'] = True
-    threading.Thread(target=_generation_thread, args=(prompt, model, chunks, stop_event, done_flag), daemon=True).start()
+    threading.Thread(target=_generation_thread, args=(prompt, model, chunks, stop_event, done_flag, err), daemon=True).start()
 
 @st.fragment(run_every=0.4)
 def streaming_area():
@@ -391,14 +395,31 @@ else :
             # Finalise a just-completed (or stopped) generation before rendering history
             if st.session_state.get('_gen_finished'):
                 content = ''.join(st.session_state.get('_gen_chunks', []))
+                errors = st.session_state.get('_gen_error') or []
                 if content:
                     returnValue('messages').append({'role': 'assistant', 'content': content})
                     save_current_session()
+                # Surface a backend error (otherwise it dies silently in the worker thread)
+                if errors and not content:
+                    # the user turn was already rolled back in the client; drop it from the UI too
+                    msgs = returnValue('messages')
+                    if msgs and msgs[-1]['role'] == 'user':
+                        msgs.pop()
+                    st.session_state['_gen_last_error'] = errors[0]
                 st.session_state['_gen_finished'] = False
                 st.session_state['_gen_stopping'] = False
                 st.session_state['generating'] = False
 
             is_generating = st.session_state.get('generating', False)
+
+            last_error = st.session_state.get('_gen_last_error')
+            if last_error:
+                st.error(f'The model backend rejected the request:\n\n{last_error}', icon='🚨')
+                if 'context' in last_error.lower():
+                    st.info('This capture is too large for the model context. Enable '
+                            '**“Auto-split large captures into chunks”** in the sidebar and pick a chunk, '
+                            'or narrow the protocol filters in Settings.', icon='💡')
+
             chat_container = st.container(height=500)
             with chat_container:
                 with st.chat_message(name='assistant', avatar=lpw_avatar):
@@ -424,6 +445,7 @@ else :
             else:
                 prompt = st.chat_input('Enter your prompt', key='prompt_ctrl')
                 if prompt:
+                    st.session_state['_gen_last_error'] = None
                     returnValue('messages').append({'role': 'user', 'content': prompt})
                     _start_generation(prompt, returnValue('selected_model'))
                     st.rerun()
