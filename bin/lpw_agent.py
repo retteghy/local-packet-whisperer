@@ -8,7 +8,7 @@ class LPWCrew:
         self.llm_host = llm_host
         self.llm_port = llm_port
         self.model = model
-        self.llm = LLM(model=f'ollama/{model}', base_url=f'http://{llm_host}:{llm_port}', api_key='could be anything')
+        self.llm = LLM(model=f'openai/{model}', base_url=f'http://{llm_host}:{llm_port}/v1', api_key='not-needed')
         self.loadConfig()
         self.crew = Crew(
             agents = [self.sne_agent],

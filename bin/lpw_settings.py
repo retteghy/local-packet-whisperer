@@ -3,6 +3,8 @@ from lpw_init import *
 from lpw_prompt import *
 from lpw_packet import *
 
+load_persisted_config()
+
 def save_sm() -> None:
     modifySM(returnValue('system_message'))
 
@@ -18,7 +20,10 @@ with st.expander(label='**LLM Server Settings**', expanded=False, icon=":materia
     st.session_state['llm_server'] = st.text_input(label="LLM Server Host", value=returnValue('llm_server'))
     st.session_state['llm_server_port'] = st.number_input(label="LLM Server Host Port", value=returnValue('llm_server_port'), min_value=1024, max_value=65525, step=1)
     setLLMServer(st.session_state['llm_server'], st.session_state['llm_server_port'])
-    st.session_state['selected_model'] = st.selectbox('**Available Models**', placeholder="Choose an Option", options=getModelList()[0])
+    model_list, is_connected = getModelList()
+    st.session_state['llm_server_connection_status'] = is_connected
+    st.session_state['selected_model'] = st.selectbox('**Available Models**', placeholder="Choose an Option", options=model_list)
+    save_persisted_config()
 st.markdown('#### Select protocols to filter in analysis')
 col1, col2, col3 = st.columns(3)
 with col1:

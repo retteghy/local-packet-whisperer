@@ -1,6 +1,7 @@
 import streamlit as st
 from pkg_resources import resource_filename
 import os
+import json
 
 DEFAULT_SYSTEM_MESSAGE = """
         You are a helper assistant specialized in analysing packet captures used to troubleshooting & technical analysis. Use the information present in packet_capture_info to answer all the questions truthfully. If the user asks about a specific application layer protocol, use the following hints to inspect the packet_capture_info to answer the question.
@@ -56,7 +57,7 @@ default_settings = {
     'system_message' : DEFAULT_SYSTEM_MESSAGE,
     'selected_model' : 'Undefined',
     'llm_server' : "127.0.0.1",
-    'llm_server_port' : 11434,
+    'llm_server_port' : 8080,
     'llm_server_connection_status' : 'False',
     'http' : False,
     'https' : False,
@@ -67,6 +68,9 @@ default_settings = {
     'ntp' : False,
     'pcap_fname' : "None 🚫",
     'pcap_data' : "",
+    'pcap_chunks' : [],
+    'selected_chunk_idx' : 0,
+    'auto_chunk' : False,
     'pcap_filters' : "",
     'insights_done' : False,
     'insights_file_done' : False,
@@ -87,3 +91,33 @@ def getLpwPath(dirname):
     if not os.path.exists(dirname_path):
         os.makedirs(dirname_path)
     return dirname_path
+
+
+_CONFIG_PATH = os.path.join(os.path.expanduser("~"), '.lpw', 'lpw_config.json')
+_PERSISTENT_KEYS = ['llm_server', 'llm_server_port', 'selected_model']
+
+
+def load_persisted_config() -> None:
+    if st.session_state.get('_config_loaded'):
+        return
+    st.session_state['_config_loaded'] = True
+    if not os.path.exists(_CONFIG_PATH):
+        return
+    try:
+        with open(_CONFIG_PATH) as f:
+            data = json.load(f)
+        for key in _PERSISTENT_KEYS:
+            if key in data and key not in st.session_state:
+                st.session_state[key] = data[key]
+    except Exception:
+        pass
+
+
+def save_persisted_config() -> None:
+    try:
+        os.makedirs(os.path.dirname(_CONFIG_PATH), exist_ok=True)
+        data = {key: st.session_state.get(key, default_settings.get(key)) for key in _PERSISTENT_KEYS}
+        with open(_CONFIG_PATH, 'w') as f:
+            json.dump(data, f, indent=2)
+    except Exception:
+        pass
