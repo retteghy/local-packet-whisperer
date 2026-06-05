@@ -11,6 +11,17 @@ Local Packet Whisperer (LPW) is an innovative project designed to facilitate loc
 > - Instant stop, responsive UX, and zero-mouse workflow
 > 👉 [Try pktai](https://github.com/kspviswa/pktai): AI-assisted packet analysis in your terminal.
 
+---
+
+## Fork Changes
+
+This fork ([retteghy/local-packet-whisperer](https://github.com/retteghy/local-packet-whisperer)) extends the original with:
+
+- **llama.cpp server support** — LPW now uses the OpenAI-compatible `/v1` API, so it works with any OpenAI-compatible backend (llama.cpp, Ollama, LM Studio, etc.), not just Ollama. Configure the host and port in Settings.
+- **Auto-split large captures into chunks** — PCAPs that produce more than 300K characters are automatically split into chunks, each analysed as a separate context. A chunk selector appears in the sidebar when a file is split. This prevents context window overflow on large captures.
+
+---
+
 [![Downloads](https://static.pepy.tech/badge/lpw)](https://pepy.tech/project/lpw) [![Downloads](https://static.pepy.tech/badge/lpw/month)](https://pepy.tech/project/lpw)
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.14251995.svg)](https://doi.org/10.5281/zenodo.14251995)
