@@ -5,6 +5,7 @@ from lpw_packet import *
 from lpw_session import save_session, load_session, list_sessions, delete_session
 from lpw_agent import LPWCrew
 import os
+import threading
 import psutil
 from streamlit_extras.tags import tagger_component
 from importlib.metadata import version, PackageNotFoundError
@@ -244,6 +245,40 @@ def getEnabledFilters():
         return None
     return tagger_component('Enabled Filters', tags=filters, color_name='blue')
 
+def _generation_thread(prompt, model, chunks, stop_event, done_flag):
+    try:
+        for chunk in chatWithModelStream(prompt=prompt, model=model, stop_event=stop_event):
+            chunks.append(chunk)
+    finally:
+        done_flag[0] = True
+
+def _start_generation(prompt, model):
+    chunks = []
+    stop_event = threading.Event()
+    done_flag = [False]
+    st.session_state['_gen_chunks'] = chunks
+    st.session_state['_gen_stop_event'] = stop_event
+    st.session_state['_gen_done_flag'] = done_flag
+    st.session_state['_gen_finished'] = False
+    st.session_state['generating'] = True
+    threading.Thread(target=_generation_thread, args=(prompt, model, chunks, stop_event, done_flag), daemon=True).start()
+
+@st.fragment(run_every=0.5)
+def streaming_area():
+    chunks = st.session_state.get('_gen_chunks', [])
+    done_flag = st.session_state.get('_gen_done_flag', [False])
+    content = ''.join(chunks)
+    with st.chat_message('assistant', avatar=lpw_avatar):
+        st.markdown(content + ('▌' if not done_flag[0] else '') if content else '*Thinking...*')
+    if not done_flag[0]:
+        if st.button('⏹ Stop generating', type='secondary', use_container_width=True):
+            stop_ev = st.session_state.get('_gen_stop_event')
+            if stop_ev:
+                stop_ev.set()
+    else:
+        st.session_state['_gen_finished'] = True
+        st.rerun(scope='app')
+
 # Restore LLM history from session state after a page switch
 if returnValue('pcap_data') and not oClient.check_system_message():
     initLLM(pcap_data=returnValue('pcap_data'))
@@ -301,6 +336,9 @@ with st.sidebar:
         if not st.session_state.get('_loaded_pcap'):
             st.session_state['pcap_fname'] = "None 🚫"
 
+    if st.session_state.get('_loaded_pcap'):
+        st.metric("Whispering with 🗣️", returnValue('pcap_fname'))
+
     # Recent Sessions: show when nothing is loaded in the current session
     if not packetFile and not st.session_state.get('_loaded_pcap'):
         sessions = list_sessions()
@@ -348,22 +386,33 @@ else :
             resetChat()
             st.markdown('#### Waiting for packets 🧘🏻🧘🏻🧘🏻🧘🏻')
         else:
+            # Finalise a just-completed generation before rendering history
+            if st.session_state.get('_gen_finished'):
+                content = ''.join(st.session_state.get('_gen_chunks', []))
+                if content:
+                    returnValue('messages').append({'role': 'assistant', 'content': content})
+                    save_current_session()
+                st.session_state['_gen_finished'] = False
+                st.session_state['generating'] = False
+
+            is_generating = st.session_state.get('generating', False)
             chat_container = st.container(height=500)
-            prompt = st.chat_input('Enter your prompt', key='prompt_ctrl', disabled=False)
-            st.sidebar.metric("Whispering with 🗣️", returnValue('pcap_fname'))
+            prompt = st.chat_input('Enter your prompt', key='prompt_ctrl', disabled=is_generating)
             with chat_container.chat_message(name='assistant', avatar=lpw_avatar):
                 st.markdown('Chat with me..')
             for message in returnValue('messages'):
-                with chat_container.chat_message(name=message['role'], avatar = lpw_avatar if message['role'] == 'assistant' else None):
+                with chat_container.chat_message(name=message['role'], avatar=lpw_avatar if message['role'] == 'assistant' else None):
                     st.markdown(message['content'])
-            if prompt:
-                returnValue('messages').append({'role' : 'user', 'content' : prompt})
+
+            if is_generating:
+                streaming_area()
+            elif prompt:
+                returnValue('messages').append({'role': 'user', 'content': prompt})
                 with chat_container.chat_message(name='user'):
                     st.markdown(prompt)
-                with chat_container.chat_message(name='assistant', avatar=lpw_avatar):
-                    full_response = st.write_stream(chatWithModelStream(prompt=prompt, model=returnValue('selected_model')))
-                    returnValue('messages').append({'role': 'assistant', 'content': full_response})
-                    save_current_session()
+                _start_generation(prompt, returnValue('selected_model'))
+                st.rerun()
+            else:
                 st.button('Reset Chat 🗑️', use_container_width=True, on_click=resetChat)
     with insights:
         show_beta_ribbon()

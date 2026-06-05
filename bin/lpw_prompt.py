@@ -29,8 +29,8 @@ def getModelList() -> List[str]:
 def chatWithModel(prompt:str, model: str):
     return oClient.chat(prompt=prompt, model=model, temp=0.4)
 
-def chatWithModelStream(prompt: str, model: str):
-    return oClient.chat_stream_generator(prompt=prompt, model=model, temp=0.4)
+def chatWithModelStream(prompt: str, model: str, stop_event=None):
+    return oClient.chat_stream_generator(prompt=prompt, model=model, temp=0.4, stop_event=stop_event)
 
 def clearHistory():
     oClient.clear_history()

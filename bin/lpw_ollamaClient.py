@@ -70,15 +70,20 @@ class OllamaClient():
             st.stop()
         return stream
 
-    def chat_stream_generator(self, prompt: str, model: str, temp: float):
+    def chat_stream_generator(self, prompt: str, model: str, temp: float, stop_event=None):
         stream = self.chat_stream(prompt, model, temp)
         full_content = ""
-        for chunk in stream:
-            content = chunk.choices[0].delta.content
-            if content:
-                full_content += content
-                yield content
-        self.messages.append({'role': 'assistant', 'content': full_content})
+        try:
+            for chunk in stream:
+                if stop_event and stop_event.is_set():
+                    stream.close()
+                    break
+                content = chunk.choices[0].delta.content
+                if content:
+                    full_content += content
+                    yield content
+        finally:
+            self.messages.append({'role': 'assistant', 'content': full_content})
 
     def getModelList(self) -> List[str] | bool:
         ret_list = []
