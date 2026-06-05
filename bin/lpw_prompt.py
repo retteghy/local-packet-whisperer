@@ -29,6 +29,9 @@ def getModelList() -> List[str]:
 def detectBackend() -> str:
     return oClient.detect_backend()
 
+def cancelStream() -> None:
+    oClient.cancel()
+
 def chatWithModel(prompt:str, model: str):
     return oClient.chat(prompt=prompt, model=model, temp=0.4)
 

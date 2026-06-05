@@ -8,6 +8,7 @@ class OllamaClient():
 
     def __init__(self, server="127.0.0.1", port=8080):
         self.messages = []
+        self._active_stream = None
         self.client = OpenAI(base_url=f'http://{server}:{port}/v1', api_key='not-needed', timeout=self.REQUEST_TIMEOUT)
 
     def setServer(self, server, port):
@@ -70,20 +71,60 @@ class OllamaClient():
             st.stop()
         return stream
 
+    def cancel(self):
+        """Abort the in-flight stream from another thread.
+
+        A worker thread blocked on a socket read (e.g. while a reasoning model is
+        loading/'thinking' and emitting nothing) cannot be freed by the in-loop
+        stop_event check. We shut the underlying socket down to wake the blocked
+        recv(), then close the HTTP response. Closing the connection also tells
+        the server (Ollama/llama.cpp) to abort generation.
+        """
+        stream = self._active_stream
+        if stream is None:
+            return
+        try:
+            ns = stream.response.extensions.get('network_stream')
+            sock = ns.get_extra_info('socket') if ns else None
+            if sock is not None:
+                import socket as _socket
+                sock.shutdown(_socket.SHUT_RDWR)
+        except Exception:
+            pass
+        try:
+            stream.response.close()
+        except Exception:
+            pass
+        try:
+            stream.close()
+        except Exception:
+            pass
+
     def chat_stream_generator(self, prompt: str, model: str, temp: float, stop_event=None):
         stream = self.chat_stream(prompt, model, temp)
+        self._active_stream = stream
         full_content = ""
         try:
             for chunk in stream:
                 if stop_event and stop_event.is_set():
-                    stream.close()
                     break
                 content = chunk.choices[0].delta.content
                 if content:
                     full_content += content
                     yield content
+        except Exception:
+            # stream was cancelled/closed externally — keep whatever we have
+            pass
         finally:
-            self.messages.append({'role': 'assistant', 'content': full_content})
+            self._active_stream = None
+            try:
+                stream.close()
+            except Exception:
+                pass
+            # Skip empty turns (e.g. stopped during 'thinking' before any token)
+            # so the LLM history stays consistent with what the UI persists.
+            if full_content:
+                self.messages.append({'role': 'assistant', 'content': full_content})
 
     def detect_backend(self) -> str:
         base = self.client.base_url  # httpx URL object

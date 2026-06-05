@@ -260,24 +260,26 @@ def _start_generation(prompt, model):
     st.session_state['_gen_stop_event'] = stop_event
     st.session_state['_gen_done_flag'] = done_flag
     st.session_state['_gen_finished'] = False
+    st.session_state['_gen_stopping'] = False
     st.session_state['generating'] = True
     threading.Thread(target=_generation_thread, args=(prompt, model, chunks, stop_event, done_flag), daemon=True).start()
 
-@st.fragment(run_every=0.5)
+@st.fragment(run_every=0.4)
 def streaming_area():
     chunks = st.session_state.get('_gen_chunks', [])
     done_flag = st.session_state.get('_gen_done_flag', [False])
-    content = ''.join(chunks)
-    with st.chat_message('assistant', avatar=lpw_avatar):
-        st.markdown(content + ('▌' if not done_flag[0] else '') if content else '*Thinking...*')
-    if not done_flag[0]:
-        if st.button('⏹ Stop generating', type='secondary', use_container_width=True):
-            stop_ev = st.session_state.get('_gen_stop_event')
-            if stop_ev:
-                stop_ev.set()
-    else:
+    # When the worker thread is done, break out of the fragment and rerun the
+    # whole app so the message gets finalised and the input bar comes back.
+    if done_flag[0]:
         st.session_state['_gen_finished'] = True
         st.rerun(scope='app')
+        return
+    content = ''.join(chunks)
+    with st.chat_message('assistant', avatar=lpw_avatar):
+        if st.session_state.get('_gen_stopping'):
+            st.markdown(content if content else '*Stopping…*')
+        else:
+            st.markdown((content + '▌') if content else '*Thinking…*')
 
 # Restore LLM history from session state after a page switch
 if returnValue('pcap_data') and not oClient.check_system_message():
@@ -386,33 +388,45 @@ else :
             resetChat()
             st.markdown('#### Waiting for packets 🧘🏻🧘🏻🧘🏻🧘🏻')
         else:
-            # Finalise a just-completed generation before rendering history
+            # Finalise a just-completed (or stopped) generation before rendering history
             if st.session_state.get('_gen_finished'):
                 content = ''.join(st.session_state.get('_gen_chunks', []))
                 if content:
                     returnValue('messages').append({'role': 'assistant', 'content': content})
                     save_current_session()
                 st.session_state['_gen_finished'] = False
+                st.session_state['_gen_stopping'] = False
                 st.session_state['generating'] = False
 
             is_generating = st.session_state.get('generating', False)
             chat_container = st.container(height=500)
-            prompt = st.chat_input('Enter your prompt', key='prompt_ctrl', disabled=is_generating)
-            with chat_container.chat_message(name='assistant', avatar=lpw_avatar):
-                st.markdown('Chat with me..')
-            for message in returnValue('messages'):
-                with chat_container.chat_message(name=message['role'], avatar=lpw_avatar if message['role'] == 'assistant' else None):
-                    st.markdown(message['content'])
+            with chat_container:
+                with st.chat_message(name='assistant', avatar=lpw_avatar):
+                    st.markdown('Chat with me..')
+                for message in returnValue('messages'):
+                    with st.chat_message(name=message['role'], avatar=lpw_avatar if message['role'] == 'assistant' else None):
+                        st.markdown(message['content'])
+                if is_generating:
+                    streaming_area()
 
+            # Bottom row: the prompt input becomes a Stop control while generating
             if is_generating:
-                streaming_area()
-            elif prompt:
-                returnValue('messages').append({'role': 'user', 'content': prompt})
-                with chat_container.chat_message(name='user'):
-                    st.markdown(prompt)
-                _start_generation(prompt, returnValue('selected_model'))
-                st.rerun()
+                if st.session_state.get('_gen_stopping'):
+                    st.button('⏹ Stopping…', disabled=True, use_container_width=True)
+                else:
+                    if st.button('⏹ Stop generating', type='secondary', use_container_width=True):
+                        stop_ev = st.session_state.get('_gen_stop_event')
+                        if stop_ev:
+                            stop_ev.set()
+                        cancelStream()  # unblocks the worker even mid-'thinking'
+                        st.session_state['_gen_stopping'] = True
+                        st.rerun()
             else:
+                prompt = st.chat_input('Enter your prompt', key='prompt_ctrl')
+                if prompt:
+                    returnValue('messages').append({'role': 'user', 'content': prompt})
+                    _start_generation(prompt, returnValue('selected_model'))
+                    st.rerun()
                 st.button('Reset Chat 🗑️', use_container_width=True, on_click=resetChat)
     with insights:
         show_beta_ribbon()
