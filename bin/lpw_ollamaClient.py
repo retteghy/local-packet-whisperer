@@ -85,6 +85,24 @@ class OllamaClient():
         finally:
             self.messages.append({'role': 'assistant', 'content': full_content})
 
+    def detect_backend(self) -> str:
+        base = self.client.base_url  # httpx URL object
+        root = f"{base.scheme}://{base.host}:{base.port}"
+        import requests
+        try:
+            r = requests.get(f"{root}/api/version", timeout=3)
+            if r.status_code == 200 and 'version' in r.json():
+                return 'ollama'
+        except Exception:
+            pass
+        try:
+            r = requests.get(f"{root}/health", timeout=3)
+            if r.status_code == 200 and r.json().get('status') == 'ok':
+                return 'llamacpp'
+        except Exception:
+            pass
+        return 'unknown'
+
     def getModelList(self) -> List[str] | bool:
         ret_list = []
         is_connected = False

@@ -26,6 +26,9 @@ def exitLLM() -> None:
 def getModelList() -> List[str]:
     return oClient.getModelList()
 
+def detectBackend() -> str:
+    return oClient.detect_backend()
+
 def chatWithModel(prompt:str, model: str):
     return oClient.chat(prompt=prompt, model=model, temp=0.4)
 

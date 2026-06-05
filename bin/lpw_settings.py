@@ -22,6 +22,22 @@ with st.expander(label='**LLM Server Settings**', expanded=False, icon=":materia
     setLLMServer(st.session_state['llm_server'], st.session_state['llm_server_port'])
     model_list, is_connected = getModelList()
     st.session_state['llm_server_connection_status'] = is_connected
+
+    if is_connected:
+        backend = detectBackend()
+        _labels = {
+            'ollama':   ('🦙 Ollama',        '#e8f4ea', '#2e7d32'),
+            'llamacpp': ('🔥 llama.cpp',      '#fff3e0', '#e65100'),
+            'unknown':  ('❓ Unknown backend', '#f5f5f5', '#757575'),
+        }
+        _text, _bg, _fg = _labels[backend]
+        st.markdown(
+            f'<div style="display:inline-block;padding:4px 12px;border-radius:6px;'
+            f'background:{_bg};color:{_fg};font-weight:600;font-size:0.85em;margin:4px 0 8px 0">'
+            f'Backend detected: {_text}</div>',
+            unsafe_allow_html=True,
+        )
+
     st.session_state['selected_model'] = st.selectbox('**Available Models**', placeholder="Choose an Option", options=model_list)
     save_persisted_config()
 st.markdown('#### Select protocols to filter in analysis')
