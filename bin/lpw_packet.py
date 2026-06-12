@@ -13,7 +13,7 @@ def remove_ansi_escape_sequences(input_string):
     return re.sub(ansi_escape_pattern, '', input_string)
 
 @st.cache_data
-def getPcapChunks(input_file: str = "", filter="", decode_info={}, chunk: bool = True) -> list[tuple[str, str]]:
+def getPcapChunks(input_file: str = "", filter="", decode_info={}, chunk: bool = True, outfile: str = 'out.txt') -> list[tuple[str, str]]:
     try:
         # pyshark uses asyncio; Streamlit's runtime can leave the current loop in a
         # closed/unusable state, which makes FileCapture silently yield zero packets.
@@ -25,7 +25,7 @@ def getPcapChunks(input_file: str = "", filter="", decode_info={}, chunk: bool =
         asyncio.set_event_loop(loop)
 
         cap = ps.FileCapture(input_file=input_file, display_filter=filter)
-        outfile_path = os.path.join(getLpwPath('temp'), 'out.txt')
+        outfile_path = os.path.join(getLpwPath('temp'), outfile)
         packet_texts = []
         with open(outfile_path, 'w') as f:
             for pkt in cap:

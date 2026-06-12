@@ -24,6 +24,19 @@ def save_current_session():
     if not pcap_fname or pcap_fname == "None 🚫" or not chunks or not messages:
         return
     chunk_label, chunk_text = chunks[idx]
+    compare_kwargs = {}
+    if st.session_state.get('compare_mode') and st.session_state.get('pcap_data_b'):
+        chunks_b = st.session_state.get('pcap_chunks_b') or []
+        idx_b = st.session_state.get('selected_chunk_idx_b', 0)
+        if chunks_b:
+            label_b, text_b = chunks_b[idx_b]
+            compare_kwargs = dict(
+                compare_mode=True,
+                pcap_fname_b=st.session_state.get('pcap_fname_b'),
+                chunk_label_b=label_b,
+                chunk_idx_b=idx_b,
+                chunk_text_b=text_b,
+            )
     save_session(
         pcap_fname=pcap_fname,
         chunk_label=chunk_label,
@@ -33,12 +46,16 @@ def save_current_session():
         llm_server=st.session_state.get('llm_server', ''),
         llm_server_port=int(st.session_state.get('llm_server_port', 0)),
         messages=list(messages),
+        **compare_kwargs,
     )
 
 
 def _session_display_name(session: dict) -> str:
     stem = os.path.splitext(session.get('pcap_fname', 'chat'))[0]
     created = session.get('created_at', '')[:16].replace('T', ' ')
+    if session.get('pcap_fname_b'):
+        stem_b = os.path.splitext(session.get('pcap_fname_b'))[0]
+        return f"{stem} ⇄ {stem_b} — {created}"
     return f"{stem} — {created}"
 
 
@@ -48,6 +65,16 @@ def restore_session_to_state(session_data: dict) -> None:
     st.session_state['pcap_chunks'] = [(session_data['chunk_label'], session_data['chunk_text'])]
     st.session_state['selected_chunk_idx'] = 0
     st.session_state['_loaded_pcap'] = session_data['pcap_fname']
+    if session_data.get('compare_mode') and session_data.get('pcap_fname_b'):
+        st.session_state['compare_mode'] = True
+        st.session_state['pcap_fname_b'] = session_data['pcap_fname_b']
+        st.session_state['pcap_data_b'] = session_data['chunk_text_b']
+        st.session_state['pcap_chunks_b'] = [(session_data['chunk_label_b'], session_data['chunk_text_b'])]
+        st.session_state['selected_chunk_idx_b'] = 0
+        st.session_state['_loaded_pcap_b'] = session_data['pcap_fname_b']
+    else:
+        st.session_state['compare_mode'] = False
+        st.session_state['_loaded_pcap_b'] = None
     st.session_state['messages'] = list(session_data.get('messages', []))
     if session_data.get('model'):
         st.session_state['selected_model'] = session_data['model']
@@ -59,9 +86,81 @@ def restore_session_to_state(session_data: dict) -> None:
     _, is_connected = getModelList()
     st.session_state['llm_server_connection_status'] = is_connected
     clearHistory()
-    initLLM(pcap_data=session_data['chunk_text'])
+    initLLMForState()
     for msg in session_data.get('messages', []):
         oClient.append_history(msg)
+
+
+def initLLMForState() -> None:
+    """(Re)build the LLM system message from current state — single capture, or
+    a combined before/after prompt when a second capture is loaded."""
+    if returnValue('compare_mode') and returnValue('pcap_data_b'):
+        initLLM(returnValue('pcap_data'), returnValue('pcap_data_b'),
+                returnValue('pcap_fname'), returnValue('pcap_fname_b'))
+    else:
+        initLLM(returnValue('pcap_data'))
+
+
+def load_capture(packetFile, slot: str) -> bool:
+    """Parse an uploaded capture into session state for slot 'a' or 'b'.
+
+    Shared protocol filters are applied to both captures. Capture B writes its
+    own out_b.txt so capture A's out.txt (used by the NGAP/Insights path) is
+    preserved. Returns False if the filter excluded everything / file is empty.
+    """
+    suffix = '' if slot == 'a' else '_b'
+    outfile = 'out.txt' if slot == 'a' else 'out_b.txt'
+    with open(f'{packetFile.name}', 'wb') as f:
+        f.write(packetFile.read())
+    filters, decodes = getFiltersAndDecodeInfo()
+    st.session_state['pcap_filters' + suffix] = filters
+    chunks = getPcapChunks(input_file=f'{packetFile.name}', filter=filters,
+                           decode_info=decodes, chunk=returnValue('auto_chunk'),
+                           outfile=outfile)
+    if not chunks:
+        return False
+    st.session_state['pcap_chunks' + suffix] = chunks
+    st.session_state['selected_chunk_idx' + suffix] = 0
+    st.session_state['pcap_data' + suffix] = chunks[0][1]
+    st.session_state['pcap_fname' + suffix] = packetFile.name
+    st.session_state['_loaded_pcap' + suffix] = packetFile.name
+    return True
+
+
+def _chunk_selector(slot: str) -> None:
+    """Render a packet-range selector for the given slot's chunks, if it has >1."""
+    suffix = '' if slot == 'a' else '_b'
+    chunks = st.session_state.get('pcap_chunks' + suffix, [])
+    if len(chunks) <= 1:
+        return
+    chunk_labels = [label for label, _ in chunks]
+    current_idx = returnValue('selected_chunk_idx' + suffix)
+    if current_idx >= len(chunk_labels):
+        current_idx = 0
+        st.session_state['selected_chunk_idx' + suffix] = 0
+    if slot == 'a' and not returnValue('compare_mode'):
+        label = '**Select packet range to analyze**'
+    else:
+        label = f"**Capture {'A' if slot == 'a' else 'B'}: select packet range**"
+    widget_key = f"chunk_select_{slot}__{st.session_state.get('_loaded_pcap' + suffix, '')}__{len(chunk_labels)}"
+    selected_label = st.selectbox(label, options=chunk_labels, index=current_idx, key=widget_key)
+    new_idx = chunk_labels.index(selected_label)
+    if new_idx != current_idx:
+        st.session_state['selected_chunk_idx' + suffix] = new_idx
+        st.session_state['pcap_data' + suffix] = chunks[new_idx][1]
+        resetChat()
+        initLLMForState()
+        st.rerun()
+
+
+def _clear_capture_b() -> None:
+    """Drop the second capture and fall back to single-capture mode. Bumps the
+    uploader key so the B file_uploader widget is reset to empty."""
+    for k in ('pcap_fname_b', 'pcap_data_b', 'pcap_chunks_b',
+              'selected_chunk_idx_b', 'pcap_filters_b', '_loaded_pcap_b'):
+        st.session_state.pop(k, None)
+    st.session_state['compare_mode'] = False
+    st.session_state['_b_uploader_seq'] = st.session_state.get('_b_uploader_seq', 0) + 1
 
 @st.cache_resource
 def _proc_cache():
@@ -312,7 +411,7 @@ def streaming_area():
 
 # Restore LLM history from session state after a page switch
 if returnValue('pcap_data') and not oClient.check_system_message():
-    initLLM(pcap_data=returnValue('pcap_data'))
+    initLLMForState()
 
 with st.sidebar:
     if returnValue('selected_model') == 'Undefined':
@@ -331,44 +430,50 @@ with st.sidebar:
         st.session_state['pcap_fname'] = packetFile.name
         if st.session_state.get('_loaded_pcap') != packetFile.name:
             with st.spinner('#### Crunching the packets... 🥣🥣🥣'):
-                with open(f'{packetFile.name}', 'wb') as f:
-                    f.write(packetFile.read())
-                filters, decodes = getFiltersAndDecodeInfo()
-                st.session_state['pcap_filters'] = filters
-                chunks = getPcapChunks(input_file=f'{packetFile.name}', filter=filters, decode_info=decodes, chunk=returnValue('auto_chunk'))
-                if not chunks:
+                if not load_capture(packetFile, 'a'):
                     st.error("No packets parsed from this capture. The active display filter may have excluded everything, or the file is empty/corrupt.", icon='🚨')
                     st.session_state['pcap_fname'] = "None 🚫"
+                    st.session_state['_loaded_pcap'] = None
                     st.stop()
-                st.session_state['pcap_chunks'] = chunks
-                st.session_state['selected_chunk_idx'] = 0
-                st.session_state['pcap_data'] = chunks[0][1]
-                st.session_state['_loaded_pcap'] = packetFile.name
-                initLLM(pcap_data=chunks[0][1])
+                initLLMForState()
 
-        chunks = st.session_state.get('pcap_chunks', [])
-        if len(chunks) > 1:
-            chunk_labels = [label for label, _ in chunks]
-            current_idx = returnValue('selected_chunk_idx')
-            if current_idx >= len(chunk_labels):
-                current_idx = 0
-                st.session_state['selected_chunk_idx'] = 0
-            chunk_widget_key = f"chunk_select__{st.session_state.get('_loaded_pcap','')}__{len(chunk_labels)}"
-            selected_label = st.selectbox('**Select packet range to analyze**', options=chunk_labels, index=current_idx, key=chunk_widget_key)
-            new_idx = chunk_labels.index(selected_label)
-            if new_idx != current_idx:
-                st.session_state['selected_chunk_idx'] = new_idx
-                st.session_state['pcap_data'] = chunks[new_idx][1]
-                resetChat()
-                initLLM(pcap_data=chunks[new_idx][1])
-                st.rerun()
+        _chunk_selector('a')
+
+        # Optional second capture for before/after comparison — only offered once
+        # the first (baseline) capture is loaded.
+        if st.session_state.get('_loaded_pcap'):
+            b_key = f"pcap_file_b_{st.session_state.get('_b_uploader_seq', 0)}"
+            packetFileB = st.file_uploader(
+                label='Upload a second capture to compare (optional)',
+                accept_multiple_files=False, type=['pcap','pcapng'], key=b_key)
+            if packetFileB:
+                if st.session_state.get('_loaded_pcap_b') != packetFileB.name:
+                    with st.spinner('#### Crunching the second capture... 🥣🥣🥣'):
+                        if not load_capture(packetFileB, 'b'):
+                            st.error("No packets parsed from the second capture. The active display filter may have excluded everything, or the file is empty/corrupt.", icon='🚨')
+                            st.session_state['pcap_fname_b'] = "None 🚫"
+                            st.session_state['_loaded_pcap_b'] = None
+                            st.stop()
+                        st.session_state['compare_mode'] = True
+                        resetChat()
+                        initLLMForState()
+                        st.rerun()
+                _chunk_selector('b')
+                if st.button('✖ Remove second capture', use_container_width=True):
+                    _clear_capture_b()
+                    resetChat()
+                    initLLMForState()
+                    st.rerun()
     else:
         # only reset if no PCAP was previously loaded this session
         if not st.session_state.get('_loaded_pcap'):
             st.session_state['pcap_fname'] = "None 🚫"
 
     if st.session_state.get('_loaded_pcap'):
-        st.metric("Whispering with 🗣️", returnValue('pcap_fname'))
+        if returnValue('compare_mode') and st.session_state.get('_loaded_pcap_b'):
+            st.metric("Comparing 🆚", f"A: {returnValue('pcap_fname')}  ⇄  B: {returnValue('pcap_fname_b')}")
+        else:
+            st.metric("Whispering with 🗣️", returnValue('pcap_fname'))
 
     # Recent Sessions: show when nothing is loaded in the current session
     if not packetFile and not st.session_state.get('_loaded_pcap'):
@@ -376,20 +481,20 @@ with st.sidebar:
         if sessions:
             with st.expander("**Recent Sessions 💾**", expanded=True):
                 for s in sessions[:10]:
-                    key_base = f"{s.get('pcap_fname','')}_{s.get('chunk_idx',0)}"
+                    key_base = f"{s.get('pcap_fname','')}_{s.get('chunk_idx',0)}_{s.get('pcap_fname_b','')}_{s.get('chunk_idx_b','')}"
                     name = _session_display_name(s)
                     st.markdown(f"**{name}**")
                     st.caption(f"{s.get('chunk_label', '')} · {len(s.get('messages', []))} msgs · {s.get('model','')[:30]}")
                     rc1, rc2 = st.columns([1, 1])
                     with rc1:
                         if st.button("Resume ↻", key=f"resume_{key_base}", use_container_width=True):
-                            full = load_session(s['pcap_fname'], s['chunk_idx'])
+                            full = load_session(s['pcap_fname'], s['chunk_idx'], s.get('pcap_fname_b'), s.get('chunk_idx_b'))
                             if full:
                                 restore_session_to_state(full)
                                 st.rerun()
                     with rc2:
                         if st.button("Delete 🗑️", key=f"del_{key_base}", use_container_width=True):
-                            delete_session(s['pcap_fname'], s['chunk_idx'])
+                            delete_session(s['pcap_fname'], s['chunk_idx'], s.get('pcap_fname_b'), s.get('chunk_idx_b'))
                             st.rerun()
                     st.divider()
 

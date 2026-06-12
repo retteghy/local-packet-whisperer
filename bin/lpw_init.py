@@ -20,6 +20,25 @@ DEFAULT_SYSTEM_MESSAGE = """
         ngap means sctp.port = 38412
 """
 
+COMPARISON_INSTRUCTIONS = """
+        You are given TWO packet captures to compare, not one. The first is
+        packet_capture_info_A (treat it as the "before" / baseline capture) and the
+        second is packet_capture_info_B (treat it as the "after" / follow-up
+        capture). The typical goal is to verify whether a change made to the network
+        between the two captures had the intended effect.
+
+        When answering, compare and contrast the two captures. Explicitly call out:
+        - What changed between A and B (protocols, hosts, ports, traffic volume, timing).
+        - What was fixed or removed in B that was a problem in A (for example,
+          credentials or sensitive data sent in cleartext in A but absent or encrypted
+          in B, an insecure protocol replaced by a secure one, etc.).
+        - Any regressions or new issues that appear in B but were not in A.
+        - Notable performance, latency, retransmission or security differences.
+        - Anything present in one capture but missing in the other.
+
+        Always make clear which capture (A/before or B/after) each observation refers to.
+"""
+
 DEFAULT_AGENT_CONFIG_YAML = """
 ---
 name: 5G_Signaling_Protocol_Specialist
@@ -72,6 +91,12 @@ default_settings = {
     'selected_chunk_idx' : 0,
     'auto_chunk' : False,
     'pcap_filters' : "",
+    'compare_mode' : False,
+    'pcap_fname_b' : "None 🚫",
+    'pcap_data_b' : "",
+    'pcap_chunks_b' : [],
+    'selected_chunk_idx_b' : 0,
+    'pcap_filters_b' : "",
     'insights_done' : False,
     'insights_file_done' : False,
     'agent_config_file' : None,
