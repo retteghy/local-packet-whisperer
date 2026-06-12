@@ -15,6 +15,12 @@ setLLMServer(returnValue('llm_server'), returnValue('llm_server_port'))
 _, _is_connected = getModelList()
 st.session_state['llm_server_connection_status'] = _is_connected
 
+# In comparison mode both captures are concatenated into one prompt with capture
+# B at the end. Past this combined size the prompt risks overflowing the model
+# context — the backend (especially Ollama) then silently truncates the tail, so
+# capture B is dropped and the model behaves as if only one capture was given.
+COMPARE_WARN_CHARS = 200_000
+
 
 def save_current_session():
     pcap_fname = st.session_state.get('pcap_fname')
@@ -471,7 +477,11 @@ with st.sidebar:
 
     if st.session_state.get('_loaded_pcap'):
         if returnValue('compare_mode') and st.session_state.get('_loaded_pcap_b'):
-            st.metric("Comparing 🆚", f"A: {returnValue('pcap_fname')}  ⇄  B: {returnValue('pcap_fname_b')}")
+            # st.metric truncates long values to one line; use captions so both
+            # full file names are visible, each on its own line, in smaller text.
+            st.markdown("**Comparing 🆚**")
+            st.caption(f"**A:** {returnValue('pcap_fname')}")
+            st.caption(f"**B:** {returnValue('pcap_fname_b')}")
         else:
             st.metric("Whispering with 🗣️", returnValue('pcap_fname'))
 
@@ -549,6 +559,18 @@ else :
                     st.info('This capture is too large for the model context. Enable '
                             '**“Auto-split large captures into chunks”** in the sidebar and pick a chunk, '
                             'or narrow the protocol filters in Settings.', icon='💡')
+
+            # Warn before the model silently drops capture B off the end of an
+            # oversized comparison prompt (Ollama truncates rather than erroring).
+            if returnValue('compare_mode') and returnValue('pcap_data_b'):
+                combined = len(returnValue('pcap_data')) + len(returnValue('pcap_data_b'))
+                if combined > COMPARE_WARN_CHARS:
+                    st.warning(
+                        f'The two captures together are large (~{combined // 1000}K characters). '
+                        'The model may silently drop the end of **Capture B**, making it look like only '
+                        '**Capture A** was provided. Enable **“Auto-split large captures into chunks”** in '
+                        'the sidebar and pick a focused range from each capture, or narrow the protocol '
+                        'filters in Settings.', icon='⚠️')
 
             chat_container = st.container(height=500)
             with chat_container:
