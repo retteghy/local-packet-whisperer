@@ -68,23 +68,43 @@ def _proc_cache():
     # keyed by pid; persists across fragment reruns so cpu_percent() has a delta to measure
     return {}
 
-def _refresh_proc_cache():
+# Process-name substring used to locate the active backend's local process.
+# The backend is auto-discovered from the configured server/port (see
+# detectBackend), so the stats reflect whichever backend is actually selected
+# rather than a hardcoded one.
+_BACKEND_PROC_MATCH = {'ollama': 'ollama', 'llamacpp': 'llama-server'}
+_BACKEND_LABEL = {'ollama': 'ollama', 'llamacpp': 'llama-server', 'unknown': 'LLM backend'}
+
+def _active_backend():
+    # detectBackend() probes the configured server over HTTP, so cache the
+    # result per server:port to avoid re-probing on every 2s fragment refresh.
+    key = (returnValue('llm_server'), returnValue('llm_server_port'))
+    cached = st.session_state.get('_backend_cache')
+    if cached and cached[0] == key:
+        return cached[1]
+    backend = detectBackend()
+    st.session_state['_backend_cache'] = (key, backend)
+    return backend
+
+def _refresh_proc_cache(backend):
     cache = _proc_cache()
+    backend_term = _BACKEND_PROC_MATCH.get(backend)
     current_pids = set()
     for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
         try:
             cmdline = ' '.join(proc.info['cmdline'] or [])
-            is_llama = 'llama-server' in cmdline or 'llama-server' in proc.info['name']
-            is_st    = 'streamlit' in cmdline
-            if is_llama or is_st:
+            name = proc.info['name'] or ''
+            is_st      = 'streamlit' in cmdline
+            is_backend = bool(backend_term) and not is_st and (backend_term in cmdline or backend_term in name)
+            if is_backend or is_st:
                 pid = proc.pid
                 current_pids.add(pid)
                 if pid not in cache:
-                    cache[pid] = {'proc': proc, 'role': 'llama' if is_llama else 'streamlit'}
+                    cache[pid] = {'proc': proc, 'role': 'streamlit' if is_st else 'backend'}
                     proc.cpu_percent()  # prime — first call always returns 0
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
-    # remove stale entries
+    # remove stale entries (also drops the old backend's procs after a switch)
     for pid in list(cache):
         if pid not in current_pids:
             del cache[pid]
@@ -92,26 +112,31 @@ def _refresh_proc_cache():
 
 @st.fragment(run_every=2)
 def show_llm_stats():
-    cache = _refresh_proc_cache()
+    backend = _active_backend()
+    cache = _refresh_proc_cache(backend)
+    backend_label = _BACKEND_LABEL.get(backend, 'LLM backend')
     st.markdown("**System Stats 📊**")
     ram = psutil.virtual_memory()
     st.caption(f"**System RAM:** {ram.used / 1e9:.1f} / {ram.total / 1e9:.1f} GB ({ram.percent}%)")
     st.caption(f"**System CPU:** {psutil.cpu_percent()}%")
 
-    llama_found = False
+    backend_found = False
     for pid, entry in cache.items():
         try:
             proc = entry['proc']
             cpu = proc.cpu_percent()
             mem_gb = proc.memory_info().rss / 1e9
-            label = 'llama-server' if entry['role'] == 'llama' else 'streamlit'
+            label = backend_label if entry['role'] == 'backend' else 'streamlit'
             st.caption(f"**{label}** (pid {pid}): CPU {cpu}% | RAM {mem_gb:.1f} GB")
-            if entry['role'] == 'llama':
-                llama_found = True
+            if entry['role'] == 'backend':
+                backend_found = True
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
-    if not llama_found:
-        st.caption("llama-server: not detected")
+    if not backend_found:
+        if backend == 'unknown':
+            st.caption("LLM backend: not detected")
+        else:
+            st.caption(f"{backend_label}: not running locally (likely on a remote host)")
 
 def get_lpw_version():
     try:
