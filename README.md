@@ -20,6 +20,7 @@ This fork ([retteghy/local-packet-whisperer](https://github.com/retteghy/local-p
 - **llama.cpp server support** — LPW now uses the OpenAI-compatible `/v1` API, so it works with any OpenAI-compatible backend (llama.cpp, Ollama, LM Studio, etc.), not just Ollama. Configure the host and port in Settings.
 - **Auto-split large captures into chunks** — PCAPs that produce more than 300K characters are automatically split into chunks, each analysed as a separate context. A chunk selector appears in the sidebar when a file is split. This prevents context window overflow on large captures.
 - **Interrupt ongoing requests** — while the model is generating a response, the prompt box turns into a **Stop** control that cancels the in-flight request immediately. It works for both Ollama and llama.cpp, even mid-"thinking" before any tokens have streamed.
+- **Compare two captures (before/after)** — after loading one capture you can upload an optional second one. Both are fed into a single chat as **Capture A** (before) and **Capture B** (after), so you can ask the model what changed between them — e.g. whether a credential that was sent in cleartext before a fix is gone afterwards. Both captures share the same protocol filters, have independent packet-range selectors, and comparison chats save/resume from Recent Sessions like single-capture sessions do.
 
 ---
 
