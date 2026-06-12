@@ -1,40 +1,39 @@
 #!/usr/bin/env bash
+# Restart LPW. On the deployment host (ihkki) LPW runs as a systemd *system*
+# service (lpw.service), so a restart is just a service restart — this no longer
+# launches Streamlit by hand. See the unit at /etc/systemd/system/lpw.service.
 set -e
-cd "$(dirname "$0")"
 
-LOG_FILE="${LPW_LOG:-$HOME/lpw.log}"
+SERVICE="${LPW_SERVICE:-lpw}"
 
-# prerequisites
-[ -x .venv/bin/streamlit ] || { echo "✗ .venv/bin/streamlit not found. Run: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"; exit 1; }
-[ -f bin/lpw_main.py ]     || { echo "✗ bin/lpw_main.py not found"; exit 1; }
+# systemctl restart on a system service needs root.
+SUDO=""
+if [ "$(id -u)" -ne 0 ]; then
+    SUDO="sudo"
+fi
 
-# free the port
-fuser -k 8501/tcp 2>/dev/null || true
-sleep 1
+if ! systemctl list-unit-files "${SERVICE}.service" >/dev/null 2>&1 \
+   || ! systemctl cat "${SERVICE}" >/dev/null 2>&1; then
+    echo "✗ systemd service '${SERVICE}' not found."
+    echo "  This script restarts the lpw systemd service; set LPW_SERVICE if it's named differently."
+    exit 1
+fi
 
-# launch streamlit fully detached: setsid gives it its own session so it
-# survives this shell closing; output goes to the log file, not the terminal.
-setsid .venv/bin/streamlit run bin/lpw_main.py > "$LOG_FILE" 2>&1 < /dev/null &
-PID=$!
-disown "$PID" 2>/dev/null || true
+echo "↻ Restarting ${SERVICE}.service ..."
+$SUDO systemctl restart "${SERVICE}"
 
-# wait up to ~10s for port 8501 to be bound, then return to the prompt
+# wait up to ~10s for port 8501 to be bound again
 for _ in $(seq 1 20); do
-    if ! kill -0 "$PID" 2>/dev/null; then
-        echo "✗ Streamlit exited before binding to port 8501. Last log lines:"
-        tail -n 15 "$LOG_FILE" 2>/dev/null
-        exit 1
-    fi
     if ss -tlnp 2>/dev/null | grep -q ":8501"; then
-        echo "✓ Streamlit running detached on port 8501 (PID $PID)"
-        echo "  logs : $LOG_FILE"
-        echo "  stop : fuser -k 8501/tcp"
+        PID=$(systemctl show -p MainPID --value "${SERVICE}" 2>/dev/null)
+        echo "✓ ${SERVICE}.service running on port 8501 (MainPID ${PID})"
+        echo "  status : systemctl status ${SERVICE}"
+        echo "  logs   : journalctl -u ${SERVICE} -f"
         exit 0
     fi
     sleep 0.5
 done
 
-echo "✗ Streamlit started (PID $PID) but did not bind to port 8501 within 10s. Last log lines:"
-tail -n 15 "$LOG_FILE" 2>/dev/null
-kill "$PID" 2>/dev/null || true
+echo "✗ ${SERVICE}.service restarted but port 8501 is not bound after 10s. Recent logs:"
+$SUDO journalctl -u "${SERVICE}" -n 15 --no-pager 2>/dev/null || true
 exit 1
